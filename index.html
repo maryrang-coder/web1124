@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>입체도형 접기 놀이</title>
+<style>
+  :root {
+    --bg: #fdf8f0; --ink: #2b2b3a; --muted: #6b6b80; --card: #ffffff;
+    --accent: #ff7a59; --line: #e8e1d6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: var(--bg); color: var(--ink); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 20px 24px 8px; text-align: center; }
+  h1 { margin: 0; font-size: 1.7rem; }
+  header p { margin: 6px 0 0; color: var(--muted); }
+  main {
+    flex: 1; display: grid; grid-template-columns: 1fr 300px; gap: 16px;
+    padding: 16px 24px 24px; max-width: 1100px; width: 100%; margin: 0 auto;
+  }
+  #stage {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    min-height: 460px; position: relative; overflow: hidden;
+  }
+  #stage canvas { display: block; width: 100%; height: 100%; }
+  .hint {
+    position: absolute; bottom: 10px; left: 0; right: 0; text-align: center;
+    font-size: .85rem; color: var(--muted); pointer-events: none;
+  }
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 1rem; }
+  .shapes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .shapes button {
+    font: inherit; padding: 10px 6px; border-radius: 12px; border: 2px solid var(--line);
+    background: #fff; cursor: pointer; color: var(--ink);
+  }
+  .shapes button:hover { border-color: #ffc2b1; }
+  .shapes button.active { border-color: var(--accent); background: #fff1ec; font-weight: 700; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row button {
+    flex: 1; font: inherit; padding: 10px; border: none; border-radius: 12px;
+    background: var(--accent); color: #fff; font-weight: 700; cursor: pointer;
+  }
+  .row button.ghost { background: #f1ece4; color: var(--ink); }
+  .pct { float: right; color: var(--muted); font-weight: 400; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .stat { background: #faf6ef; border-radius: 12px; padding: 10px 4px; }
+  .stat b { display: block; font-size: 1.5rem; }
+  .stat span { font-size: .8rem; color: var(--muted); }
+  .euler { margin: 10px 0 0; font-size: .85rem; color: var(--muted); text-align: center; }
+  .desc { margin: 0; font-size: .9rem; line-height: 1.5; color: var(--muted); }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; }
+    #stage { min-height: 380px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧩 입체도형 접기 놀이</h1>
+  <p>평면 전개도를 접어서 입체도형을 만들어 보세요!</p>
+</header>
+<main>
+  <div id="stage"><div class="hint">마우스로 끌어서 돌려 보고, 휠로 확대해 보세요</div></div>
+  <aside>
+    <div class="card">
+      <h2>도형 고르기</h2>
+      <div class="shapes" id="shapes"></div>
+    </div>
+    <div class="card">
+      <h2>접기 <span class="pct" id="pct">0%</span></h2>
+      <input type="range" id="fold" min="0" max="100" value="0" />
+      <div class="row">
+        <button id="play">▶ 접기</button>
+        <button id="reset" class="ghost">펼치기</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2 id="name">정육면체</h2>
+      <p class="desc" id="desc"></p>
+      <div class="stats" style="margin-top:12px">
+        <div class="stat"><b id="f">6</b><span>면</span></div>
+        <div class="stat"><b id="e">12</b><span>모서리</span></div>
+        <div class="stat"><b id="v">8</b><span>꼭짓점</span></div>
+      </div>
+      <p class="euler" id="euler"></p>
+    </div>
+  </aside>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const R3 = Math.sqrt(3);
+const deg = d => d * Math.PI / 180;
+const sq = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+
+// 각 면: pts(평면 좌표), parent(부모 면 번호), hinge(접는 선), fold(접는 각도)
+const SHAPES = {
+  cube: {
+    name: "정육면체", F: 6, E: 12, V: 8,
+    desc: "정사각형 6개로 이루어진 도형이에요. 주사위가 정육면체 모양이지요.",
+    faces: [
+      { pts: sq(0, 0, 1, 1) },
+      { pts: sq(0, 1, 1, 2), parent: 0, hinge: [[0, 1], [1, 1]], fold: 90 },
+      { pts: sq(0, 2, 1, 3), parent: 1, hinge: [[0, 2], [1, 2]], fold: 90 },
+      { pts: sq(0, -1, 1, 0), parent: 0, hinge: [[0, 0], [1, 0]], fold: 90 },
+      { pts: sq(-1, 0, 0, 1), parent: 0, hinge: [[0, 0], [0, 1]], fold: 90 },
+      { pts: sq(1, 0, 2, 1), parent: 0, hinge: [[1, 0], [1, 1]], fold: 90 },
+    ],
+  },
+  tetra: {
+    name: "정사면체", F: 4, E: 6, V: 4,
+    desc: "정삼각형 4개로 이루어진 도형이에요. 삼각뿔의 한 종류예요.",
+    faces: (() => {
+      const P0 = [0, 0], P1 = [2, 0], P2 = [1, R3];
+      const A = [1, 0], B = [1.5, R3 / 2], C = [0.5, R3 / 2];
+      const f = 180 - Math.acos(1 / 3) * 180 / Math.PI;
+      return [
+        { pts: [A, B, C] },
+        { pts: [P0, A, C], parent: 0, hinge: [A, C], fold: f },
+        { pts: [A, P1, B], parent: 0, hinge: [A, B], fold: f },
+        { pts: [C, B, P2], parent: 0, hinge: [C, B], fold: f },
+      ];
+    })(),
+  },
+  pyramid: {
+    name: "사각뿔", F: 5, E: 8, V: 5,
+    desc: "밑면은 사각형, 옆면은 삼각형 4개예요. 이집트 피라미드 모양이에요.",
+    faces: (() => {
+      const h = R3 / 2;
+      const f = 180 - Math.acos(1 / R3) * 180 / Math.PI;
+      return [
+        { pts: sq(0, 0, 1, 1) },
+        { pts: [[0, 0], [1, 0], [0.5, -h]], parent: 0, hinge: [[0, 0], [1, 0]], fold: f },
+        { pts: [[1, 0], [1, 1], [1 + h, 0.5]], parent: 0, hinge: [[1, 0], [1, 1]], fold: f },
+        { pts: [[1, 1], [0, 1], [0.5, 1 + h]], parent: 0, hinge: [[0, 1], [1, 1]], fold: f },
+        { pts: [[0, 1], [0, 0], [-h, 0.5]], parent: 0, hinge: [[0, 0], [0, 1]], fold: f },
+      ];
+    })(),
+  },
+  prism: {
+    name: "삼각기둥", F: 5, E: 9, V: 6,
+    desc: "위아래 밑면은 삼각형 2개, 옆면은 직사각형 3개예요.",
+    faces: (() => {
+      const H = 1.5, h = R3 / 2;
+      return [
+        { pts: sq(1, 0, 2, H) },
+        { pts: sq(0, 0, 1, H), parent: 0, hinge: [[1, 0], [1, H]], fold: 120 },
+        { pts: sq(2, 0, 3, H), parent: 0, hinge: [[2, 0], [2, H]], fold: 120 },
+        { pts: [[1, H], [2, H], [1.5, H + h]], parent: 0, hinge: [[1, H], [2, H]], fold: 90 },
+        { pts: [[1, 0], [2, 0], [1.5, -h]], parent: 0, hinge: [[1, 0], [2, 0]], fold: 90 },
+      ];
+    })(),
+  },
+  cuboid: {
+    name: "직육면체", F: 6, E: 12, V: 8,
+    desc: "직사각형 6개로 이루어진 도형이에요. 상자나 벽돌 모양이지요.",
+    faces: (() => {
+      const a = 1.6, b = 1, c = 0.7; // 가로, 세로, 높이
+      return [
+        { pts: sq(0, 0, a, b) },
+        { pts: sq(0, b, a, b + c), parent: 0, hinge: [[0, b], [a, b]], fold: 90 },
+        { pts: sq(0, b + c, a, 2 * b + c), parent: 1, hinge: [[0, b + c], [a, b + c]], fold: 90 },
+        { pts: sq(0, -c, a, 0), parent: 0, hinge: [[0, 0], [a, 0]], fold: 90 },
+        { pts: sq(-c, 0, 0, b), parent: 0, hinge: [[0, 0], [0, b]], fold: 90 },
+        { pts: sq(a, 0, a + c, b), parent: 0, hinge: [[a, 0], [a, b]], fold: 90 },
+      ];
+    })(),
+  },
+  hexprism: {
+    name: "육각기둥", F: 8, E: 18, V: 12,
+    desc: "위아래 밑면은 육각형 2개, 옆면은 직사각형 6개예요. 연필 모양이에요.",
+    faces: (() => {
+      const H = 1.4, faces = [];
+      for (let i = 0; i < 6; i++) {
+        const f = { pts: sq(i, 0, i + 1, H) };
+        if (i > 0) Object.assign(f, { parent: i - 1, hinge: [[i, 0], [i, H]], fold: 60 });
+        faces.push(f);
+      }
+      // 한 변이 [0,cy]-[1,cy] 인 정육각형
+      const hex = (cy, dir) => {
+        const cx = 0.5, cyy = cy + dir * R3 / 2, res = [];
+        for (let k = 0; k < 6; k++) {
+          const t = deg(60 * k + (dir > 0 ? -120 : 120));
+          res.push([cx + Math.cos(t), cyy + Math.sin(t)]);
+        }
+        return res;
+      };
+      faces.push({ pts: hex(H, 1), parent: 0, hinge: [[0, H], [1, H]], fold: 90 });
+      faces.push({ pts: hex(0, -1), parent: 0, hinge: [[0, 0], [1, 0]], fold: 90 });
+      return faces;
+    })(),
+  },
+};
+
+const COLORS = ["#ff8a65", "#4fc3f7", "#aed581", "#ffd54f", "#ba68c8", "#4db6ac", "#f06292", "#7986cb"];
+
+// ---------- three.js 기본 설정 ----------
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+camera.position.set(2.5, -5, 5.5);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd8cfc0, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(3, -4, 8);
+scene.add(sun);
+
+let root = null, hinges = [], current = "cube";
+
+function build(key) {
+  if (root) scene.remove(root);
+  const shape = SHAPES[key];
+  root = new THREE.Group();
+  hinges = [];
+  const holders = [];
+
+  shape.faces.forEach((f, i) => {
+    const s = new THREE.Shape(f.pts.map(([x, y]) => new THREE.Vector2(x, y)));
+    const geo = new THREE.ShapeGeometry(s);
+    const mat = new THREE.MeshStandardMaterial({
+      color: COLORS[i % COLORS.length], side: THREE.DoubleSide, roughness: .6,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({ color: 0x3a3a4a }));
+    const holder = new THREE.Group();
+    holder.add(mesh, edges);
+
+    if (f.parent === undefined) {
+      root.add(holder);
+    } else {
+      const [A, B] = f.hinge.map(([x, y]) => new THREE.Vector3(x, y, 0));
+      const axis = B.clone().sub(A).normalize();
+      // 면의 중심이 위(+z)로 올라가도록 회전 방향 결정
+      const c = new THREE.Vector3();
+      f.pts.forEach(([x, y]) => c.add(new THREE.Vector3(x, y, 0)));
+      c.divideScalar(f.pts.length).sub(A).applyAxisAngle(axis, 0.1);
+      const sign = c.z > 0 ? 1 : -1;
+
+      const pivot = new THREE.Group(); pivot.position.copy(A);
+      const rot = new THREE.Group();
+      const back = new THREE.Group(); back.position.copy(A).negate();
+      pivot.add(rot); rot.add(back); back.add(holder);
+      holders[f.parent].add(pivot);
+      hinges.push({ rot, axis, angle: sign * deg(f.fold) });
+    }
+    holders[i] = holder;
+  });
+
+  scene.add(root);
+  controls.target.set(0, 0, 0);
+
+  document.getElementById("name").textContent = shape.name;
+  document.getElementById("desc").textContent = shape.desc;
+  document.getElementById("f").textContent = shape.F;
+  document.getElementById("e").textContent = shape.E;
+  document.getElementById("v").textContent = shape.V;
+  document.getElementById("euler").textContent =
+    `면 + 꼭짓점 − 모서리 = ${shape.F} + ${shape.V} − ${shape.E} = ${shape.F + shape.V - shape.E}`;
+  setFold(+slider.value / 100);
+}
+
+function setFold(t) {
+  hinges.forEach(h => h.rot.quaternion.setFromAxisAngle(h.axis, h.angle * t));
+  // 접히는 동안에도 도형이 화면 가운데에 오도록
+  root.position.set(0, 0, 0);
+  const c = new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3());
+  root.position.set(-c.x, -c.y, -c.z);
+  document.getElementById("pct").textContent = Math.round(t * 100) + "%";
+}
+
+// ---------- UI ----------
+const slider = document.getElementById("fold");
+slider.addEventListener("input", () => { anim = null; setFold(slider.value / 100); });
+
+const shapesEl = document.getElementById("shapes");
+Object.entries(SHAPES).forEach(([key, s]) => {
+  const b = document.createElement("button");
+  b.textContent = s.name;
+  b.onclick = () => {
+    current = key;
+    [...shapesEl.children].forEach(x => x.classList.toggle("active", x === b));
+    build(key);
+  };
+  if (key === current) b.classList.add("active");
+  shapesEl.appendChild(b);
+});
+
+let anim = null;
+function animateTo(target) {
+  anim = { from: +slider.value, to: target, start: performance.now() };
+}
+document.getElementById("play").onclick = () => animateTo(100);
+document.getElementById("reset").onclick = () => animateTo(0);
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+
+renderer.setAnimationLoop(now => {
+  if (anim) {
+    const p = Math.min(1, (now - anim.start) / 1500);
+    const e = p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+    slider.value = anim.from + (anim.to - anim.from) * e;
+    setFold(slider.value / 100);
+    if (p >= 1) anim = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+build(current);
+</script>
+</body>
+</html>
